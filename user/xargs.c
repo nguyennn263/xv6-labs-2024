@@ -1,14 +1,14 @@
 #include "kernel/types.h"
 #include "kernel/stat.h"
 #include "user/user.h"
-#include "kernel/param.h"  // MAXARG
+#include "kernel/param.h"
 
 int is_blank(char ch) {
     return (ch == ' ' || ch == '\t');
 } 
 
 int main(int argc, char *argv[]) {
-	char buffer[2048];
+	char buffer[2222];
     char *p_buffer = buffer;
     char ch;
 	char *arg[MAXARG];
@@ -16,9 +16,8 @@ int main(int argc, char *argv[]) {
 	int blank = 0;
 	int len = 0;
 
-
-	if(argc <= 1){
-		fprintf(2, "Thieu tham so");
+	if(argc < 2){
+		fprintf(2, "Thieu tham so: xargs <command> arg...");
 		exit(1);
 	}
 
@@ -26,12 +25,14 @@ int main(int argc, char *argv[]) {
 		arg[i-1] = argv[i];
 	}
 
+    // Doc lan luot ki tu
 	while (read(0, &ch, 1) > 0) {
         if(is_blank(ch)){
             blank = 1;
             continue;
-        } 
+        }
 
+        // Them 1 argument moi neu truoc do co blank
         if(blank){
 			buffer[len++] = '\0';
 
@@ -40,6 +41,7 @@ int main(int argc, char *argv[]) {
 			blank = 0;
         }
 
+        // Neu xuong dong thi phai fork va thuc thi lenh
 		if (ch != '\n') {
 			buffer[len++] = ch;
 		} 
@@ -49,12 +51,11 @@ int main(int argc, char *argv[]) {
 
             int pid = fork();
 			if (pid == 0) {
-				exit(exec(arg[0], arg));
+                exec(arg[0], arg);
+				exit(0);
 			}
 			wait(0);
-			
 			num_arg = argc - 1;
-
 		}
 	}
 
