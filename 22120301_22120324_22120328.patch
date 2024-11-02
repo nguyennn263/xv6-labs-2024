@@ -1,0 +1,307 @@
+diff --git a/Makefile b/Makefile
+index 74e454f..d72ebd2 100644
+--- a/Makefile
++++ b/Makefile
+@@ -194,7 +194,10 @@ UPROGS=\
+ 	$U/_grind\
+ 	$U/_wc\
+ 	$U/_zombie\
+-
++	$U/_pingpong\
++	$U/_primes\
++	$U/_find\
++	$U/_xargs
+ 
+ 
+ 
+diff --git a/user/find.c b/user/find.c
+new file mode 100644
+index 0000000..715d877
+--- /dev/null
++++ b/user/find.c
+@@ -0,0 +1,83 @@
++#include "kernel/types.h"
++#include "kernel/stat.h"
++#include "user/user.h"
++#include "kernel/fs.h"
++
++char* fmtname(char *path)
++{
++  static char buf[DIRSIZ+1];
++  char *p;
++
++  // Find first character after last slash.
++  for(p=path+strlen(path); p >= path && *p != '/'; p--)
++    ;
++  p++;
++
++  // Return blank-padded name.
++  if(strlen(p) >= DIRSIZ)
++    return p;
++  memmove(buf, p, strlen(p));
++  memset(buf+strlen(p), ' ', DIRSIZ-strlen(p));
++  return buf;
++}
++
++void find(char *path, char *target) {
++    char buf[512], *p;
++    int fd;
++    struct dirent de;
++    struct stat st;
++
++    if ((fd = open(path, 0)) < 0) {
++        fprintf(2, "find: cannot open %s\n", path);
++        return;
++    }
++
++    if (fstat(fd, &st) < 0) {
++        fprintf(2, "find: cannot stat %s\n", path);
++        close(fd);
++        return;
++    }
++
++    switch (st.type) {
++    case T_FILE:
++        if (strcmp(fmtname(path), target) == 0) {
++            printf("%s\n", path);
++        }
++        break;
++
++    case T_DIR:
++        if (strlen(path) + 1 + DIRSIZ + 1 > sizeof buf) {
++            printf("find: path too long\n");
++            break;
++        }
++        strcpy(buf, path);
++        p = buf + strlen(buf);
++        *p++ = '/';
++        while (read(fd, &de, sizeof(de)) == sizeof(de)) {
++            if (de.inum == 0) continue; // Empty entry
++            memmove(p, de.name, DIRSIZ);
++            p[DIRSIZ] = 0;
++
++            // Avoid recursing into "." and ".."
++            if (strcmp(de.name, ".") != 0 && strcmp(de.name, "..") != 0) {
++                find(buf, target); // Recursive call
++            }
++
++            // Check if the current entry matches the target
++            if (strcmp(de.name, target) == 0) {
++                printf("%s\n", buf);
++            }
++        }
++        break;
++    }
++    close(fd);
++}
++
++int main(int argc, char *argv[]) {
++    if (argc != 3) {
++        fprintf(2, "Usage: find <path> <filename>\n");
++        exit(1);
++    }
++    find(argv[1], argv[2]);
++    exit(0);
++}
+\ No newline at end of file
+diff --git a/user/pingpong.c b/user/pingpong.c
+new file mode 100644
+index 0000000..db33a6a
+--- /dev/null
++++ b/user/pingpong.c
+@@ -0,0 +1,48 @@
++#include "kernel/types.h"
++#include "kernel/stat.h"
++#include "user/user.h"
++
++int main() {
++    int p[2]; // Tạo pipe
++    char buf[1];
++    
++    if (pipe(p)<0) {
++        fprintf(2, "pipe failed\n");
++        exit(1);
++    }
++
++    int pid = fork();
++    if (pid < 0) {
++        fprintf(2, "fork failed\n");
++        exit(1);
++    }
++
++    if (pid == 0) { // child process
++        close(p[1]); // đóng write end của pipe
++        
++        // Đọc byte
++        if (read(p[0], buf, 1) != 1) {
++            fprintf(2, "child read failed\n");
++            exit(1);
++        }
++        printf("%d: received ping\n", getpid());
++
++        close(p[0]);
++        exit(0);
++    } else { // parent process
++        close(p[0]); 
++
++        // Gửi byte
++        if (write(p[1], "a", 1) != 1) {
++            fprintf(2, "parent write failed\n");
++            exit(1);
++        }
++
++        wait(0); // đợi child process kết thúc
++
++        printf("%d: received pong\n", getpid());
++
++        close(p[1]);
++        exit(0);
++    }
++}
+\ No newline at end of file
+diff --git a/user/primes.c b/user/primes.c
+new file mode 100644
+index 0000000..0cae0b4
+--- /dev/null
++++ b/user/primes.c
+@@ -0,0 +1,70 @@
++#include "kernel/types.h"
++#include "kernel/stat.h"
++#include "user/user.h"
++
++const int LAST_PRIME = 280;
++const int FIRST_PRIME = 2;
++
++int process(int in_fd, int prime) {
++	int p[2];
++	pipe(p);
++	int out_pipe = p[1];
++
++	int num;
++	int pid = fork();
++	if (pid == 0) {
++		// Lan luot sang so nguyen to
++		while (read(in_fd, &num, sizeof(int))) {
++			if (num % prime != 0) {
++				// Tranh truong hop pipe bi day.
++				while(write(out_pipe, &num, sizeof(int)) == -1){
++					
++				}
++			}
++		}
++		close(in_fd);
++		close(out_pipe);
++		exit(0);
++	}
++	else {
++		close(in_fd);
++		close(out_pipe);
++		wait(0);
++		return p[0];
++	}
++}
++
++int main(int argc, char *argv[]) {
++	int p[2];
++	pipe(p);
++// Boi vi pipe chi chua duoc 512 byte tuong ung voi 128 so nguyen -> khong the viet het 279 so vao pipe
++// Do do can phai vua ghi vua doc tren pipe. 
++// Co the thay duoc write chi co 1 thao tac, nhung read thi se co nhieu thao tac hon, do do co the write nhanh hon read
++// -> pipe co the se bi day
++
++    int pid = fork();
++	if (pid == 0) {
++		for (int i = FIRST_PRIME; i <= LAST_PRIME; i++) {
++			// Tranh truong hop pipe bi day.
++			while(write(p[1], &i, sizeof(int)) == -1){
++
++			}
++		}
++		close(p[1]);
++		exit(0);
++	}
++	else {
++		close(p[1]);
++
++		int in_pipe = p[0];
++		int prime; 
++		// Doc pipe de in ra so nguyen to va goi fork.
++		while (read(in_pipe, &prime, sizeof(int))) {
++			printf("prime %d\n", prime); 
++			in_pipe = process(in_pipe, prime);
++		}
++
++		wait(0);
++		exit(0);
++	}
++}
+diff --git a/user/xargs.c b/user/xargs.c
+new file mode 100644
+index 0000000..14d63c5
+--- /dev/null
++++ b/user/xargs.c
+@@ -0,0 +1,63 @@
++#include "kernel/types.h"
++#include "kernel/stat.h"
++#include "user/user.h"
++#include "kernel/param.h"
++
++int is_blank(char ch) {
++    return (ch == ' ' || ch == '\t');
++} 
++
++int main(int argc, char *argv[]) {
++	char buffer[2222];
++    char *p_buffer = buffer;
++    char ch;
++	char *arg[MAXARG];
++	int num_arg = argc-1;
++	int blank = 0;
++	int len = 0;
++
++	if(argc < 2){
++		fprintf(2, "Thieu tham so: xargs <command> arg...");
++		exit(1);
++	}
++
++	for (int i = 1; i <= num_arg; i++) {
++		arg[i-1] = argv[i];
++	}
++
++    // Doc lan luot ki tu
++	while (read(0, &ch, 1) > 0) {
++        if(is_blank(ch)){
++            blank = 1;
++            continue;
++        }
++
++        // Them 1 argument moi neu truoc do co blank
++        if(blank){
++			buffer[len++] = '\0';
++
++			arg[num_arg++] = p_buffer;
++			p_buffer = buffer + len;
++			blank = 0;
++        }
++
++        // Neu xuong dong thi phai fork va thuc thi lenh
++		if (ch != '\n') {
++			buffer[len++] = ch;
++		} 
++        else {
++			arg[num_arg++] = p_buffer;
++			p_buffer = buffer + len;
++
++            int pid = fork();
++			if (pid == 0) {
++                exec(arg[0], arg);
++				exit(0);
++			}
++			wait(0);
++			num_arg = argc - 1;
++		}
++	}
++
++	exit(0);
++}
+\ No newline at end of file
